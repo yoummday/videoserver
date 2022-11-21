@@ -358,7 +358,6 @@ static GThread *handler_thread;
 static void *janus_videocall_handler(void *data);
 static void janus_videocall_hangup_media_internal(janus_plugin_session *handle);
 
-
 /* JSON serialization options */
 static size_t json_format = JSON_INDENT(3) | JSON_PRESERVE_ORDER;
 
@@ -602,47 +601,49 @@ void janus_videocall_destroy_session(janus_plugin_session *handle, int *error) {
 		*error = -2;
 		return;
 	}
-	
-	/* Push up-to-date list of available peers to other users */
-	json_t *event = json_object();
-	json_t *update = json_object();
-	json_t *list = json_array();
-	JANUS_LOG(LOG_VERB, "Sending updated list of peers\n");
-	/* Return a list of all available mountpoints */
-	GHashTableIter iter;
-	gpointer value;
-	g_hash_table_iter_init(&iter, sessions);
-	while (g_hash_table_iter_next(&iter, NULL, &value)) {
-		janus_videocall_session *user = value;
-		if(user != NULL && user != session) {
-			janus_refcount_increase(&user->ref);
-			if(user->username != NULL) {
-				/* Get list of own user type */
-				if((user->is_agent == session->is_agent) && (strncmp(user->username, "qa", 2) == strncmp(session->username, "qa", 2)))
-					json_array_append_new(list, json_string(user->username));
+
+	if (session->username != NULL) {
+		/* Push up-to-date list of available peers to other users */
+		json_t *event = json_object();
+		json_t *update = json_object();
+		json_t *list = json_array();
+		JANUS_LOG(LOG_VERB, "Sending updated list of peers\n");
+		/* Return a list of all available mountpoints */
+		GHashTableIter iter;
+		gpointer value;
+		g_hash_table_iter_init(&iter, sessions);
+		while (g_hash_table_iter_next(&iter, NULL, &value)) {
+			janus_videocall_session *user = value;
+			if(user != NULL && user != session) {
+				janus_refcount_increase(&user->ref);
+				if(user->username != NULL) {
+					/* Get list of own user type */
+					if((user->is_agent == session->is_agent) && (strncmp(user->username, "qa", 2) == strncmp(session->username, "qa", 2)))
+						json_array_append_new(list, json_string(user->username));
+				}
+				janus_refcount_decrease(&user->ref);
 			}
-			janus_refcount_decrease(&user->ref);
 		}
-	}
-	json_object_set_new(update, "list", list);
-	json_object_set_new(event, "videocall", json_string("event"));
-	json_object_set_new(event, "listevent", json_string("sessionadded"));
-	json_object_set_new(event, "result", update);
-	
-	g_hash_table_iter_init(&iter, sessions);
-	while (g_hash_table_iter_next(&iter, NULL, &value)) {
-		janus_videocall_session *user = value;
-		if(user != NULL) {
-			janus_refcount_increase(&user->ref);
-			if((user->is_agent != session->is_agent) && (strncmp(user->username, "qa", 2) == strncmp(session->username, "qa", 2))) {
-				/* Push list to opposite user type */
-				int ret = gateway->push_event(user->handle, &janus_videocall_plugin, NULL, event, NULL);
-				JANUS_LOG(LOG_VERB, "  >> Pushing event to user: %d (%s)\n", ret, janus_get_api_error(ret));
+		json_object_set_new(update, "list", list);
+		json_object_set_new(event, "videocall", json_string("event"));
+		json_object_set_new(event, "listevent", json_string("sessionadded"));
+		json_object_set_new(event, "result", update);
+
+		g_hash_table_iter_init(&iter, sessions);
+		while (g_hash_table_iter_next(&iter, NULL, &value)) {
+			janus_videocall_session *user = value;
+			if(user != NULL && user->username != NULL && session->username != NULL) {
+				janus_refcount_increase(&user->ref);
+				if((user->is_agent != session->is_agent) && (strncmp(user->username, "qa", 2) == strncmp(session->username, "qa", 2))) {
+					/* Push list to opposite user type */
+					int ret = gateway->push_event(user->handle, &janus_videocall_plugin, NULL, event, NULL);
+					JANUS_LOG(LOG_VERB, "  >> Pushing event to user: %d (%s)\n", ret, janus_get_api_error(ret));
+				}
+				janus_refcount_decrease(&user->ref);
 			}
-			janus_refcount_decrease(&user->ref);
 		}
+		json_decref(event);
 	}
-	json_decref(event);
 
 	JANUS_LOG(LOG_VERB, "Removing VideoCall user %s session...\n", session->username ? session->username : "'unknown'");
 	janus_videocall_hangup_media_internal(handle);
@@ -1007,7 +1008,6 @@ static void janus_videocall_recorder_close(janus_videocall_session *session) {
 	}
 }
 
-
 static void startRecording(janus_videocall_session *session) {
 	janus_videocall_session *peer = session->peer;
 	char recording_base[255];
@@ -1295,7 +1295,7 @@ static void *janus_videocall_handler(void *data) {
 				janus_videocall_session *user = value;
 				if(user != NULL) {
 					janus_refcount_increase(&user->ref);
-					if(user->username != NULL) {
+					if(user->username != NULL && session->username != NULL) {
 						/* OB-Managers get a list of agents only and vice versa */
 						if((user->is_agent != session->is_agent) && (strncmp(user->username, "qa", 2) == strncmp(session->username, "qa", 2)))
 							json_array_append_new(list, json_string(user->username));
@@ -1363,7 +1363,7 @@ static void *janus_videocall_handler(void *data) {
 			g_hash_table_iter_init(&iter, sessions);
 			while (g_hash_table_iter_next(&iter, NULL, &value)) {
 				janus_videocall_session *user = value;
-				if(user != NULL) {
+				if(user != NULL && user->username != NULL) {
 					janus_refcount_increase(&user->ref);
 					if((user->is_agent != session->is_agent) && (strncmp(user->username, "qa", 2) == strncmp(session->username, "qa", 2))) {
 						/* Push list to opposite user type */
@@ -1522,7 +1522,7 @@ static void *janus_videocall_handler(void *data) {
 			g_free(peernamecpy);
 			if(!strcmp(username_text, session->username)) {
 				g_atomic_int_set(&session->incall, 0);
-				JANUS_LOG(LOG_ERR, "You can't call yourself... use the EchoTest for that\n");
+				JANUS_LOG(LOG_ERR, "You can't call yourself...");
 				error_code = JANUS_VIDEOCALL_ERROR_USE_ECHO_TEST;
 				g_snprintf(error_cause, 512, "You can't call yourself...");
 				/* Hangup the call attempt of the user */
@@ -1744,6 +1744,44 @@ static void *janus_videocall_handler(void *data) {
 				session->video_active = json_is_true(video);
 				JANUS_LOG(LOG_VERB, "Setting video property: %s\n", session->video_active ? "true" : "false");
 			}
+			janus_videocall_session *peer = session->peer;
+			/* Also notify event handlers */
+			if(notify_events && gateway->events_is_enabled()) {
+				json_t *info = json_object();
+				json_object_set_new(info, "event", json_string("configured"));
+				json_object_set_new(info, "audio_active", session->audio_active ? json_true() : json_false());
+				json_object_set_new(info, "video_active", session->video_active ? json_true() : json_false());
+				if(session->arc || session->vrc) {
+					json_t *recording = json_object();
+					if(session->arc && session->arc->filename)
+						json_object_set_new(recording, "audio", json_string(session->arc->filename));
+					if(session->vrc && session->vrc->filename)
+						json_object_set_new(recording, "video", json_string(session->vrc->filename));
+					json_object_set_new(info, "recording", recording);
+				}
+				gateway->notify_event(&janus_videocall_plugin, session->handle, info);
+			}
+			/* Send an ack back */
+			result = json_object();
+			json_object_set_new(result, "event", json_string("set"));
+			/* If this is for an ICE restart, prepare the SDP to send back too */
+			gboolean do_restart = restart ? json_is_true(restart) : FALSE;
+			if(do_restart && !sdp_update) {
+				JANUS_LOG(LOG_WARN, "Got a 'restart' request, but no SDP update? Ignoring...\n");
+			}
+			if(sdp_update && peer != NULL) {
+				/* Forward new SDP to the peer */
+				json_t *event = json_object();
+				json_object_set_new(event, "videocall", json_string("event"));
+				json_t *update = json_object();
+				json_object_set_new(update, "event", json_string("update"));
+				json_object_set_new(event, "result", update);
+				json_t *jsep = json_pack("{ssss}", "type", msg_sdp_type, "sdp", msg_sdp);
+				int ret = gateway->push_event(peer->handle, &janus_videocall_plugin, NULL, event, jsep);
+				JANUS_LOG(LOG_VERB, "  >> Pushing event: %d (%s)\n", ret, janus_get_api_error(ret));
+				json_decref(event);
+				json_decref(jsep);
+			}
 		} else if(!strcasecmp(request_text, "hangup")) {
 			json_t *hangup = json_object_get(root, "reason");
 			if(hangup && !json_is_string(hangup)) {
@@ -1823,6 +1861,8 @@ static void *janus_videocall_handler(void *data) {
 
 error:
 		{
+			if(tokencpy != NULL)
+				g_free(tokencpy);
 			/* Prepare JSON error event */
 			json_t *event = json_object();
 			json_object_set_new(event, "videocall", json_string("event"));
